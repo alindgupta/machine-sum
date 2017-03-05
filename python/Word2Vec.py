@@ -16,7 +16,6 @@ class Word2Vec:
 		# hyperparameters
 		self.learning_rate = 1e-1
 		self.num_steps = 1e5
-		
 		self.embeddings = None
 		self.dictionary = {}
 		self.reverse_dictionary = {}
