@@ -10,22 +10,19 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
 from data_utils import DataUtils
-from skipgrams import exec_skipgrams, exec_skipgrams2
+from skipgrams import exec_ngrams
 
 class WordEmbeddings:
     def __init__(self, args):
         self.args = args
-        
         with DataUtils(self.filename) as duf:
             self.text = duf.process()
 
-
-       
     @classmethod
     def loop_func(cls):
         # XXX: skipgrams implementation
         raise NotImplementedError
-    
+
     @property
     @lru_cache(maxsize=None)
     def embeddings(self):
@@ -35,10 +32,9 @@ class WordEmbeddings:
             return self._embeddings
 
     def embed(self, loop_function=loop_func):
-        
 
         def summarizer():
-            with tf.name_scope('summary')
+            with tf.name_scope('summary'):
                 summary = tf.summary.FileWriter(self.logdir)
 
         with tf.Graph().as_default():
@@ -53,8 +49,8 @@ class WordEmbeddings:
             with tf.device('/cpu:0'):
                 with tf.name_scope('embeddings'):
                     embeddings = tf.get_variable('embeddings',
-                            shape=[pass],
-                            tf.random_normal_initializer())
+                            shape=[self.input_size, self.embedding_size],
+                            initializer=tf.random_normal_initializer())
                     _embed = tf.nn.embedding_lookup(embeddings, inputs)
 
             with tf.name_scope('noise-contr-estimation'):
@@ -66,9 +62,9 @@ class WordEmbeddings:
                         [self.input_size],
                         dtype=tf.float32,
                         initializer=tf.constant_initializer(0.0))
-                nce_loss = tf.nn.nce_loss(nce_w,    # nce 
+                nce_loss = tf.nn.nce_loss(nce_w,
                         nce_b,                      # nce
-                        labels,                     
+                        labels,
                         inputs,
                         num_sampled=10,     # probably negative sampling
                         num_classes=self.input_size,
