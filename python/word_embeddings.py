@@ -45,7 +45,6 @@ class WordEmbeddings:
 
     @classmethod
     def loop_func(cls) -> Generator:
-        """ """
         pass
 
     def embed(self):
@@ -77,11 +76,11 @@ class WordEmbeddings:
                 with tf.name_scope('embeddings'):
                     embeddings = tf.get_variable(
                             'embeddings',
-                            [self.input_size, self.embedding_size),
+                            [self.input_size, self.embedding_size],
                             initializer=tf.random_normal_initializer(
                                 mean=0.0,
                                 stddev=1.0
-                                )]
+                                ))
                     _embed = tf.nn.embedding_lookup(embeddings, inputs)
 
                 with tf.name_scope('nce-weights'):
@@ -111,8 +110,7 @@ class WordEmbeddings:
                     tf.summary_scalar('nce-loss', loss)
 
                 with tf.name_scope('optimizer'):
-                    optimizer = tf.train.AdamOptimizer(self.learning_rate).
-                    minimize(loss)
+                    optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
 
                 
                 # create a session
@@ -173,7 +171,7 @@ class WordEmbeddings:
             pass
 
         else:
-            embeddings = 
+            pass 
 
 
         tsne = TSNE(n_components=2, init='pca')

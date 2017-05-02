@@ -69,7 +69,7 @@ class DataUtils:
         if not self._context_managed:
             raise Exception('Object must be initialized using a' \
             'context manager')
-        assert isinstance(func, callable), 'Require a function'
+        assert hasattr(func, '__call__')
         yield from (func(line, *args, **kwargs) for line in self._lines)
 
     def dump(self):
