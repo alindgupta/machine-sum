@@ -1,210 +1,203 @@
-""" Implementation of word2vec using skipgrams in tensorflow """
-
 import os
-import argparse
-from typing import List, Generator
+import string
+import pickle
+import functools
+from collections import Counter
+import collections
+from typing import Generator
+import random
 
-import tensorflow as tf
+# external dependancies
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.manifold import TSNE
+import nltk
+import tensorflow as tf
 
-class WordEmbeddings:
-    """ Embed words from a corpus into vector """
 
-    def __init__(self, filename, logdir, input_size):
+# inline with cython
+def is_numeric(x: str) -> bool:
+    """ Check if a string is coercible to float """
+    try:
+        float(x)
+        return True
+    except ValueError:
+        return False
 
-        assert os.path.isfile(args.filename), 'Could not find file ' \
-                '{}'.format(args.filename)
+data_index = 0
 
-        self.filename = filename
-        self.logdir = logdir
-        self.embedding_size = 128
-        self.input_size = input_size
-        self.num_epochs = 10
-        self.verbose = True
-        self.batch_size = 256
-        self.learning_rate = 1e-1
 
-        # run the data utils function to retrive the following
-        self.data = None
-        self.vocabulary = None
-        self.reverse_vocabulary = None
+def batcher(data, batch_size, num_skips, skip_window):
+    """ Generate batches """
+    global data_index
+    assert batch_size % num_skips == 0
+    assert num_skips <= 2 * skip_window
+    batch = np.ndarray(shape=[batch_size], dtype=np.int32)
+    labels = np.ndarray(shape=[batch_size, 1], dtype=np.int32)
+    span = 2 * skip_window + 1
+    buffer = collections.deque(maxlen=span)
+    for _ in range(span):
+        buffer.append(data[data_index])
+        data_index = (data_index + 1) % len(data)
+    for i in range(batch_size // num_skips):
+        target = skip_window
+        targets_to_avoid = [skip_window]
+        for j in range(num_skips):
+            while target in targets_to_avoid:
+                target = random.randint(0, span - 1)
+            targets_to_avoid.append(target)
+            batch[i * num_skips + j] = buffer[skip_window]
+            labels[i * num_skips + j, 0] = buffer[target]
+        buffer.append(data[data_index])
+        data_index = (data_index + 1) % len(data)
+    data_index = (data_index + len(data) - span) % len(data)
+    return batch, labels
 
-        # embeddings output
-        self._embeddings = None
+
+class Embedder:
+
+    # tokens to filter from corpus
+    # include stopwords and punctuation
+    invalid_tokens = set((nltk.corpus.stopwords.words('english')) +
+                         list(string.punctuation))
+
+    def __init__(self, filename: str):
+
+        # assert the file exists
+        assert os.path.isfile(filename)
+
+        self.filename = filename        # text file with corpus
+        self.input_size = 0             # number of tokens to embed
+        self.embedding_size = 128       # size of embedding vector
+        self.num_epochs = 10            # number of epochs to train
+        self.batch_size = 50           # batch size
+        self.learning_rate = 1e-2       # learning rate
+        self._data = []
+        self._vocabulary = {}
+        self.corpus = []
+
+    @functools.lru_cache(maxsize=1)
+    def set_attributes(self, max_fraction=1000) -> None:
+        """
+        Generate data 
+        
+        :param max_fraction - fraction of corpus size to embed
+        for example, for corpus size of length L,
+        max_fraction of 1 will embed the entire corpus
+        max_fraction of 10 will embed the L/10th  most frequent words
+        max_fraction of 100 will embed the L/100th  most frequent words
+        Recommended: 1000-10000
+        
+        """
+        try:
+            with open(self.filename) as file_handle:  # -> List[str]
+                for line in file_handle:    # bottleneck loop, use cython
+                    self._data += [token for token in nltk.word_tokenize(line)
+                                   if token not in Embedder.invalid_tokens
+                                   and not is_numeric(token)]
+        except IOError as err:
+            print('Unable to read file ', self.filename)
+            print(err)
+
+        max_input_count = len(self._data) // max_fraction    # -> int
+        self.input_size = max_input_count
+
+        counter = iter(Counter(set(self._data)).most_common(max_input_count - 1))
+        self._vocabulary = {token: token_id for token_id, token in
+                            enumerate([item for item, _ in counter], 1)}
+        self._vocabulary['UNK'] = 0
+
+        self.corpus = [self._vocabulary[i] if i in self._vocabulary
+                       else self._vocabulary['UNK'] for i in self._data]
+
+    def dump(self):
+        """ Pickle all fields """
+        with open(r'dumpObject.pickle', 'w') as pk_handle:
+            pickle.dump(self.__dict__, pk_handle)
 
     @property
-    def get_embeddings(self):
-        """ """
-        if self._embeddings:
-            return self._embeddings
-        else:
-            print('Please run the embed method first')
-            return None
+    def vocabulary(self):
+        return self._vocabulary
 
-    @classmethod
-    def loop_func(cls) -> Generator:
-        pass
+    @property
+    def data(self):
+        return self._data
 
+    @property
+    def embeddings(self):
+        if not self._embeddings:
+            print('Embeddings not set, perhaps you have not run embed()')
+        return self._embeddings
+
+    @functools.lru_cache(maxsize=1)
     def embed(self):
-        """ """
+        # with tf.name_scope('summary'):
+        #    summary = tf.summary.FileWriter(self.logdir)
 
-        # initialize tensorboard summarizer
-        def summarizer():
-            with tf.name_scope('summary'):
-                summary = tf.summary.FileWriter(self.logdir)
+        with tf.Graph().as_default():
 
-        
-        # set up graph
-        with tf.Graph('graph').as_default():
-            
-            # placeholders for input and labels
+            # placeholders for batching
             with tf.name_scope('placeholders'):
                 inputs = tf.placeholder(
-                        tf.int32,
-                        [self.batch_size],
-                        name='inputs')
+                            tf.int32,
+                            [self.batch_size],
+                            name='inputs')
                 labels = tf.placeholder(
                         tf.int32,
-                        [self.batch_size],
+                        [self.batch_size, 1],
                         name='labels')
 
+            # specify cpu instructions
             with tf.device('/cpu:0'):
-
-                # initialize random word embeddings
                 with tf.name_scope('embeddings'):
                     embeddings = tf.get_variable(
-                            'embeddings',
-                            [self.input_size, self.embedding_size],
-                            initializer=tf.random_normal_initializer(
-                                mean=0.0,
-                                stddev=1.0
-                                ))
+                                    'embeddings',
+                                    [self.input_size, self.embedding_size],
+                                    initializer=tf.random_normal_initializer(
+                                        mean=0.0,
+                                        stddev=1.0))
                     _embed = tf.nn.embedding_lookup(embeddings, inputs)
 
-                with tf.name_scope('nce-weights'):
+                with tf.name_scope('nc-weights'):
                     nce_w = tf.get_variable(
-                            'nce_w',
+                            'nce-w',
                             [self.input_size, self.embedding_size],
                             dtype=tf.float32,
-                            initializer=tf.truncated_normal_initializer(
+                            initializer=tf.random_normal_initializer(
                                 mean=0.0,
-                                stddev=1.0 / np.sqrt(self.input_size)
-                                ))
-                    nce_b = tf.get_variable('nce_b',
+                                stddev=1.0/np.sqrt(self.input_size)))
+                    nce_b = tf.get_variable(
+                            'nce-b',
                             [self.input_size],
                             dtype=tf.float32,
                             initializer=tf.constant_initializer(0.0))
-                
+
                 with tf.name_scope('loss'):
                     nce_loss = tf.nn.nce_loss(
                             nce_w,
                             nce_b,
                             labels,
-                            inputs,
-                            num_sampled=50,         # neg samples
+                            _embed,
+                            num_sampled=5,
                             num_classes=self.input_size
                             )
                     loss = tf.reduce_mean(nce_loss)
-                    tf.summary_scalar('nce-loss', loss)
 
                 with tf.name_scope('optimizer'):
-                    optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
+                    optimizer = tf.train.AdamOptimizer(
+                            self.learning_rate
+                            ).minimize(loss)
 
-                
-                # create a session
                 with tf.Session() as sess:
-                    num_epochs = 0
                     sess.run(tf.global_variables_initializer())
                     average_loss = 0.0
 
-                    while num_epochs < self.num_epochs:
-
-                        # refactor to a method
-                        gen_batch = loop_func()
-                        try:
-                            x, y = next(gen_batch)
-                        except StopIteration:
-                            gen_batch = loop_func()
-                            x, y = next(gen_batch)
-                            epochs += 1
-                            continue
-
-                    batch_dict = {inputs: batch_inputs, outputs: batch_outputs}
-                    _, loss_val = sess.run([optimizer, loss], feed_dict=batch_dict)
-                    average_loss += loss_val
-
-        self._embeddings = embeddings
-    
-    def plot(self, woi=''):
-        """ 
-        params
-        ------
-        woi: the word of interest
-
-        This method will plot the 500 closest words to woi
-        if provided by user. Else, it will plot the first 500
-        words in the embeddings matrix
-        
-        """
-        
-        if not self._embeddings:
-            raise Exception('No embeddings to plot, maybe you haven\'t run embed')
-
-        if woi: 
-            if not woi in self.vocabulary:
-                raise ValueError('{} could not be found in corpus'.format(woi))
-
-            woi_embedding = tf.nn.embedding_lookup(self._embeddings,
-                    self.vocabulary[woi])
-            
-            # compute cosine distance
-            norm = tf.sqrt(tf.reduce_mean(
-                tf.square(self._embeddings),
-                axis=1,
-                keep_dims=True
-                ))
-            normalized_embeddings = tf.div(self._embeddings, norm)
-            cosdist = tf.matmul(woi_embedding, normalized_embeddings)
-            plt_embeddings = np.argsort(cosdist)[:500, :]
-            pass
-
-        else:
-            pass 
-
-
-        tsne = TSNE(n_components=2, init='pca')
-        transf_embeds = tsne.fit_transform(embeddings)
-
-            
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-            '--filepath',
-            type=str,
-            default=None,
-            help='Absolute filepath for corpus'
-            )
-    parser.add_argument(
-            '--logdir',
-            type=str,
-            default=None,
-            help='Directory for logging tensorflow data'
-            )
-    parser.add_argument(
-            '--embedding_size',
-            type=int,
-            default=256,
-            help='Size of the embedding vectors'
-            )
-    parser.add_argument(
-            '--num_epochs',
-            type=int,
-            default=10,
-            help='Number of epochs to run'
-            )
-
-if __name__ == '__main__':
-    main()
-
+                    epoch = 0
+                    for step in range(1000):
+                        batch_inputs, batch_outputs = batcher(self.corpus,
+                                                              self.batch_size, 2, 4)
+                        _, loss_value = sess.run([optimizer, loss],
+                                                 feed_dict={inputs: batch_inputs,
+                                                            labels: batch_outputs})
+                        average_loss += loss_value
+                        if step % 100 == 0:
+                            print(average_loss/100)
+                    return embeddings.eval()
