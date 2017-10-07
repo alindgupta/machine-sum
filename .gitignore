@@ -2,3 +2,6 @@
 text_file.txt
 .cache*
 __pycache__
+.\#*
+*~
+\#*\#
