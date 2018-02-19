@@ -27,7 +27,7 @@ def regex_parser(text: str) -> Dict[str, List[str]]:
     stopwords = set(nltk.corpus.stopwords.words('english'))
     sents = nltk.sent_tokenize(text)
     abbreviations = {}
-    query_brackets = re.compile(r'\((\w+)\)')
+    query_brackets = re.compile(r'\(([^\)]+)\)')
     for sent_ in sents:
         matches = list(re.finditer(query_brackets, sent_))
         if matches:
